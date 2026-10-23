@@ -6,6 +6,6 @@ Vox.app/
 # macOS
 .DS_Store
 
-# Local scratch
-*.png
+# Local scratch (screenshots written to the repo root by --shot)
+/*.png
 .swiftpm/
