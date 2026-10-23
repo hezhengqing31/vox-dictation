@@ -3,7 +3,7 @@ import Foundation
 /// Model client: talks to the llmwriter scenes already running on the server by default,
 /// but any equivalent endpoint (local mlx_lm.server / llama.cpp) works too.
 struct LLMClient {
-    /// e.g. http://192.168.1.101:5000
+    /// e.g. http://127.0.0.1:5000
     var baseURL: URL
     /// Writer endpoint: first draft, or tidy the new content into the existing text.
     var writerPath: String = "/llmwriter/write"
@@ -27,7 +27,7 @@ struct LLMClient {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 180
         cfg.timeoutIntervalForResource = 240
-        // Direct LAN connection: no system proxy (Clash forwards 192.168.x.x and answers 502)
+        // No system proxy: a global proxy can hijack direct endpoint calls and answer 502
         cfg.connectionProxyDictionary = [:]
         return URLSession(configuration: cfg)
     }

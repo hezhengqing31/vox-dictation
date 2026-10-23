@@ -44,7 +44,7 @@ final class ASR: ObservableObject {
     private var finals: [String] = []
     private var partial = ""
 
-    private var host = "192.168.1.101"
+    private var host = "127.0.0.1"
     private var port = 6006
     /// Buffer audio until the socket finishes its handshake, otherwise the first words are lost.
     private var pending: [Data] = []

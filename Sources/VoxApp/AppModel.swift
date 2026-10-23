@@ -92,10 +92,7 @@ final class AppModel: ObservableObject {
     init() {
         // Talk to the backend on :5000 directly to dodge the 30s Next proxy timeout
         // (the first request after a cold start can take 25s+).
-        let stored = UserDefaults.standard.string(forKey: "vox.baseURL")
-        baseURLString = (stored == nil || stored == "http://192.168.1.101:3000")
-            ? "http://192.168.1.101:5000"
-            : stored!
+        baseURLString = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://127.0.0.1:5000"
         clearNoAsk = UserDefaults.standard.bool(forKey: "vox.clearNoAsk")
 
         let storedLanguage = UserDefaults.standard.string(forKey: "vox.language")
@@ -113,7 +110,7 @@ final class AppModel: ObservableObject {
     }
 
     var client: LLMClient {
-        LLMClient(baseURL: URL(string: baseURLString) ?? URL(string: "http://127.0.0.1:3000")!)
+        LLMClient(baseURL: URL(string: baseURLString) ?? URL(string: "http://127.0.0.1:5000")!)
     }
 
     var hasOutput: Bool { !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

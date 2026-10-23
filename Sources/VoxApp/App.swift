@@ -12,8 +12,8 @@ struct VoxApp: App {
         }
         if let i = CommandLine.arguments.firstIndex(of: "--asrtest"),
            i + 1 < CommandLine.arguments.count {
-            let base = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://192.168.1.101:3000"
-            let host = URL(string: base)?.host ?? "192.168.1.101"
+            let base = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://127.0.0.1:5000"
+            let host = URL(string: base)?.host ?? "127.0.0.1"
             // Optional third argument: seconds of tail silence to pad (default 1.2; 0 = none, for comparison)
             let pad = (i + 2 < CommandLine.arguments.count)
                 ? (Double(CommandLine.arguments[i + 2]) ?? 1.2) : 1.2
@@ -25,8 +25,8 @@ struct VoxApp: App {
         }
         if let i = CommandLine.arguments.firstIndex(of: "--fileasrtest"),
            i + 1 < CommandLine.arguments.count {
-            let base = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://192.168.1.101:5000"
-            let host = URL(string: base)?.host ?? "192.168.1.101"
+            let base = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://127.0.0.1:5000"
+            let host = URL(string: base)?.host ?? "127.0.0.1"
             ASRSelfTest.runFileAndExit(wav: CommandLine.arguments[i + 1], host: host)
         }
         if let i = CommandLine.arguments.firstIndex(of: "--shot"),
@@ -79,7 +79,7 @@ enum WindowShot {
 /// Headless self-test: verifies the "model endpoint + llmwriter" path end to end
 enum SelfTest {
     static func runAndExit() -> Never {
-        let base = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://192.168.1.101:3000"
+        let base = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://127.0.0.1:5000"
         guard let url = URL(string: base) else { print("bad url"); exit(2) }
         let client = LLMClient(baseURL: url)
         let sem = DispatchSemaphore(value: 0)

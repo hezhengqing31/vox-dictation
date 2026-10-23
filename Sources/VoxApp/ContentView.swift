@@ -357,7 +357,7 @@ struct ContentView: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text(T(.setModelEndpoint)).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
-                TextField("http://192.168.1.101:5000", text: $m.baseURLString)
+                TextField("http://127.0.0.1:5000", text: $m.baseURLString)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5, design: .monospaced))
                     .padding(7)
