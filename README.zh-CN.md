@@ -55,9 +55,22 @@
 |---|---|
 | 本地 sherpa | 你填的主机上的 sherpa-onnx 流式服务（`:6006`，出实时绿字）与非流式服务（`:6007`，出定稿） |
 | OpenAI / Groq / 硅基流动 / 自定义 | `POST {base}/audio/transcriptions`，multipart 上传，Bearer Key。整段上传：松手后才出文字 |
+| 阿里云百炼 Qwen-ASR | OpenAI 兼容的**chat** 接口（`/compatible-mode/v1`）：音频以 base64 的 `input_audio` 传，模型 `qwen3-asr-flash` |
+| 百度短语音 | `POST /server_api`，JSON + base64 音频，Bearer API Key；"模型"字段填百度的 `dev_pid`（1537 普通话、1737 英文） |
 | Deepgram | `POST {base}/v1/listen?model=…`，音频放在请求体里 |
 
-不支持的：提交任务再轮询、或每家一套签名的厂商（AssemblyAI、Azure Speech、阿里云、腾讯云、火山引擎、讯飞）。它们各自要不同的鉴权和轮询流程，暂不做；任何 OpenAI 兼容的服务都能用"自定义"接进来。
+国内厂商的接口形态，以及哪些接得进来：
+
+| 形态 | 厂商 | 状态 |
+|---|---|---|
+| OpenAI 兼容整段上传 | OpenAI、Groq、硅基流动、Together、Fireworks | 已支持 |
+| OpenAI 兼容 chat + 音频片段 | 阿里云百炼（Qwen-ASR） | 已支持 |
+| Bearer Key + base64 JSON | 百度 | 已支持 |
+| 音频进 body、返回嵌套 JSON | Deepgram | 已支持 |
+| 每家自建签名 | 腾讯云（TC3-HMAC，单次 60s/3MB）、讯飞（WebSocket + HMAC） | 未支持：要各自实现签名 |
+| 提交任务 + 轮询 | 阿里云经典 ISI、火山引擎豆包（appid + token）、AssemblyAI、Azure Speech | 未支持：要上传 + 轮询流程 |
+
+其余能说 OpenAI 转写协议的，用"自定义"都能接。
 
 ## 代码结构
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var m: AppModel
+    @State private var settingsTab: SettingsTab = .model
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,32 +37,6 @@ struct ContentView: View {
         }
         .sheet(isPresented: $m.showSettings) { settingsSheet }
         .task {
-            // The fake-demo fixture runs in its own Task before bootstrap:
-            // bootstrap awaits the system permission dialog, which can hang for a long time.
-            if CommandLine.arguments.contains("--fakedemo") {
-                Task { @MainActor in
-                    let zh = L10n.shared.lang == .zh
-                    m.pill = T(.stReady)
-                    m.outputSeconds = 4.5
-                    m.input = zh ? "第一行输入文字\n第二行输入文字\n第三行输入文字"
-                                 : "First line of input\nSecond line of input\nThird line of input"
-                    m.output = zh ? "第一行输出文字\n第二行输出文字\n第三行输出文字"
-                                  : "First line of output\nSecond line of output\nThird line of output"
-                    m.inputHandle.replaceAll(with: m.input)
-                    m.outputHandle.replaceAll(with: m.output)
-                    m.instructions.append(zh ? "第一条假指令：把上线步骤按顺序排好"
-                                             : "Sample instruction: put the rollout steps in order")
-                    m.applied.append(AppModel.AppliedItem(
-                        text: zh ? "假记录：把风险单独列一块" : "Sample entry: give risks their own section",
-                        isTidy: true))
-                    m.applied.append(AppModel.AppliedItem(
-                        text: zh ? "假记录：第二段语气改正式" : "Sample entry: make paragraph two more formal",
-                        isTidy: false))
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                    m.asr._debugSimulateFinish(zh ? "模拟收尾：这一段应该一直是可见的绿字"
-                                                  : "Simulated tail: this line stays visible throughout")
-                }
-            }
             await m.bootstrap()
             m.startHealthTicker()
         }
@@ -341,101 +316,54 @@ struct ContentView: View {
 
     // MARK: Settings
 
+    private enum SettingsTab: String, CaseIterable, Identifiable {
+        case model, speech, app
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .model: return T(.tabModel)
+            case .speech: return T(.tabSpeech)
+            case .app: return T(.tabApp)
+            }
+        }
+    }
+
     private var settingsSheet: some View {
         VStack(spacing: 0) {
-            // Scrollable so the sheet height stays fixed whether the ASR engine needs two
-            // fields (sherpa) or five (cloud).
+            HStack {
+                Text(T(.settingsTitle)).font(.system(size: 14, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+
+            // Three independent things to configure; a tab bar keeps each one readable instead
+            // of burying the speech settings under a long scrolling list.
+            Picker("", selection: $settingsTab) {
+                ForEach(SettingsTab.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+
+            Divider().overlay(Theme.sBorder)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(T(.settingsTitle)).font(.system(size: 14, weight: .semibold))
-
-                    labelRow(T(.setProvider)) {
-                        Picker("", selection: $m.provider) {
-                            ForEach(LLMProvider.allCases) { provider in
-                                Text(provider.label).tag(provider)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(width: 230)
+                    switch settingsTab {
+                    case .model: modelSettings
+                    case .speech: speechSettings
+                    case .app: appSettings
                     }
-
-                    fieldBlock(T(.setModelEndpoint), text: $m.baseURLString,
-                               prompt: "https://api.deepseek.com/v1",
-                               help: T(.setEndpointHint))
-
-                    fieldBlock(T(.setModel), text: $m.modelName, prompt: m.provider.defaultModel)
-
-                    if m.provider.requiresKey {
-                        secureBlock(T(.setApiKey), text: $m.apiKey, prompt: "sk-…", help: T(.setKeyHint)) {
-                            m.saveAPIKey()
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Button {
-                            m.saveAPIKey()
-                            Task { await m.refreshHealth() }
-                        } label: { Text(T(.setTest)) }
-                            .buttonStyle(VoxButtonStyle(kind: .normal))
-                        Text(m.llmOK == nil ? T(.setNotChecked) : (m.llmOK! ? T(.setConnected) : T(.setUnreachable)))
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(m.llmOK == nil ? Theme.sDim2 : (m.llmOK! ? Theme.sAccent : Theme.sFire))
-                    }
-
-                    Divider().overlay(Theme.sBorder)
-
-                    labelRow(T(.setAsrEngine)) {
-                        Picker("", selection: $m.asrEngine) {
-                            ForEach(ASREngine.allCases) { engine in
-                                Text(engine.label).tag(engine)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(width: 230)
-                    }
-
-                    if m.asrEngine.usesLocalServers {
-                        fieldBlock(T(.setAsrHost), text: $m.asrHost, prompt: "127.0.0.1",
-                                   help: T(.setAsrTitle) + "\n" + m.asr.endpoint + T(.setAsrProtocol))
-                    } else {
-                        fieldBlock(T(.setAsrBaseURL), text: $m.asrBaseURL,
-                                   prompt: m.asrEngine.defaultBaseURL)
-                        fieldBlock(T(.setAsrModel), text: $m.asrModel, prompt: m.asrEngine.defaultModel)
-                        if m.asrEngine.requiresKey {
-                            secureBlock(T(.setAsrKey), text: $m.asrKey, prompt: "sk-…", help: nil) {
-                                m.saveASRKey()
-                            }
-                        }
-                        fieldBlock(T(.setAsrLanguage), text: $m.asrLanguage, prompt: "zh")
-                    }
-
-                    Text(m.asrAuthorized == true ? T(.setMicGranted) : T(.setMicDenied))
-                        .font(.system(size: 10))
-                        .foregroundStyle(m.asrAuthorized == true ? Theme.sDim2 : Theme.sFire)
-
-                    Divider().overlay(Theme.sBorder)
-
-                    labelRow(T(.setLanguage)) {
-                        Picker("", selection: $m.uiLanguage) {
-                            ForEach(UILanguage.allCases) { language in
-                                Text(language.label).tag(language)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(width: 190)
-                    }
-
-                    Toggle(isOn: $m.clearNoAsk) {
-                        Text(T(.setClearNoAsk)).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
-                    }
-                    .toggleStyle(.checkbox)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(18)
             }
+
             Divider().overlay(Theme.sBorder)
             HStack {
                 Spacer()
@@ -449,8 +377,155 @@ struct ContentView: View {
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
         }
-        .frame(width: 500, height: 620)
+        .frame(width: 500, height: 560)
         .background(Theme.sBg)
+    }
+
+    // MARK: Settings tabs
+
+    @ViewBuilder
+    private var modelSettings: some View {
+        labelRow(T(.setProvider)) {
+            Picker("", selection: $m.provider) {
+                ForEach(LLMProvider.allCases) { provider in
+                    Text(provider.label).tag(provider)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 230)
+        }
+
+        fieldBlock(T(.setModelEndpoint), text: $m.baseURLString,
+                   prompt: "https://api.deepseek.com/v1",
+                   help: T(.setEndpointHint))
+
+        fieldBlock(T(.setModel), text: $m.modelName, prompt: m.provider.defaultModel)
+
+        if m.provider.requiresKey {
+            secureBlock(T(.setApiKey), text: $m.apiKey, prompt: "sk-…", help: T(.setKeyHint)) {
+                m.saveAPIKey()
+            }
+        }
+
+        HStack(spacing: 8) {
+            Button {
+                m.saveAPIKey()
+                Task { await m.refreshHealth() }
+            } label: { Text(T(.setTest)) }
+                .buttonStyle(VoxButtonStyle(kind: .normal))
+            statusText(m.llmOK)
+        }
+    }
+
+    @ViewBuilder
+    private var speechSettings: some View {
+        labelRow(T(.setAsrEngine)) {
+            Picker("", selection: $m.asrEngine) {
+                ForEach(ASREngine.allCases) { engine in
+                    Text(engine.label).tag(engine)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 230)
+        }
+
+        if m.asrEngine.usesLocalServers {
+            fieldBlock(T(.setAsrHost), text: $m.asrHost, prompt: "127.0.0.1",
+                       help: T(.setAsrLocalHelp) + "\n" + m.asr.endpoint)
+        } else {
+            fieldBlock(T(.setAsrBaseURL), text: $m.asrBaseURL,
+                       prompt: m.asrEngine.defaultBaseURL,
+                       help: T(.setAsrCloudHelp))
+            fieldBlock(T(.setAsrModel), text: $m.asrModel, prompt: m.asrEngine.defaultModel)
+            if m.asrEngine.requiresKey {
+                secureBlock(T(.setAsrKey), text: $m.asrKey, prompt: "sk-…", help: nil) {
+                    m.saveASRKey()
+                }
+            }
+            fieldBlock(T(.setAsrLanguage), text: $m.asrLanguage, prompt: "zh")
+        }
+
+        HStack(spacing: 8) {
+            Button {
+                Task { await m.testASR() }
+            } label: { Text(T(.setTest)) }
+                .buttonStyle(VoxButtonStyle(kind: .normal))
+            asrStatusLine
+        }
+
+        Text(m.asrAuthorized == true ? T(.setMicGranted) : T(.setMicDenied))
+            .font(.system(size: 10))
+            .foregroundStyle(m.asrAuthorized == true ? Theme.sDim2 : Theme.sFire)
+    }
+
+    @ViewBuilder
+    private var appSettings: some View {
+        labelRow(T(.setLanguage)) {
+            Picker("", selection: $m.uiLanguage) {
+                ForEach(UILanguage.allCases) { language in
+                    Text(language.label).tag(language)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 190)
+        }
+
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(
+                get: { !m.clearNoAsk },
+                set: { m.clearNoAsk = !$0 }
+            )) {
+                Text(T(.setConfirmClear)).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
+            }
+            .toggleStyle(.checkbox)
+            Text(T(.setConfirmClearHelp))
+                .font(.system(size: 10)).foregroundStyle(Theme.sDim2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Settings helpers
+
+    /// Connection state for the model tab, in the same words as the status strip.
+    private func statusText(_ state: Bool?) -> some View {
+        Text(state == nil ? T(.setNotChecked) : (state! ? T(.setConnected) : T(.setUnreachable)))
+            .font(.system(size: 11.5))
+            .foregroundStyle(state == nil ? Theme.sDim2 : (state! ? Theme.sAccent : Theme.sFire))
+    }
+
+    /// One line that says whether the speech engine can actually transcribe right now.
+    private var asrStatusLine: some View {
+        var text = ""
+        var color = Theme.sDim2
+        if !m.asrSettings.isConfigured {
+            text = T(.asrNotConfigured)
+            color = Theme.sFire
+        } else {
+            let key = m.asrKey.trimmingCharacters(in: .whitespaces)
+            if m.asrEngine.keyIsRequired && key.isEmpty {
+                text = T(.asrKeyMissing)
+                color = Theme.sFire
+            } else if m.asrOnline == false {
+                text = T(.asrUnreachable)
+                color = Theme.sFire
+            } else {
+                let where_ = m.asrEngine.usesLocalServers ? m.asrHost : m.asrBaseURL
+                let model = m.asrModel.isEmpty ? m.asrEngine.label : m.asrModel
+                text = TF(.asrReady, where_, model)
+                color = m.asrOnline == true ? Theme.sAccent : Theme.sDim2
+            }
+        }
+        return HStack(alignment: .top, spacing: 6) {
+            Circle().fill(color).frame(width: 6, height: 6).padding(.top, 4)
+            Text(text)
+                .font(.system(size: 10.5))
+                .foregroundStyle(color)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     private func labelRow<C: View>(_ title: String, @ViewBuilder _ control: () -> C) -> some View {
@@ -479,7 +554,7 @@ struct ContentView: View {
             if let help {
                 Text(help)
                     .font(.system(size: 10)).foregroundStyle(Theme.sDim2)
-                    .lineLimit(3)
+                    .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

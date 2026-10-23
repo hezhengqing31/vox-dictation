@@ -26,6 +26,10 @@ enum CloudASR {
             return try await upload(wav: wav, settings: settings)
         case .deepgram:
             return try await deepgram(wav: wav, settings: settings)
+        case .dashscope:
+            return try await dashscope(wav: wav, settings: settings)
+        case .baidu:
+            return try await baidu(wav: wav, settings: settings)
         case .sherpa:
             throw Failure(message: TF(.errASRFailed, "local engine"))
         }
@@ -39,6 +43,10 @@ enum CloudASR {
         switch settings.engine.kind {
         case .openAICompatible: path = "/models"
         case .deepgram: path = "/v1/auth/token"
+        case .dashscope, .baidu:
+            // No free metadata endpoint: any HTTP answer (even 401/404) proves the host is up,
+            // and the real test is the first transcription.
+            return await hostAnswers(base)
         case .sherpa: return false
         }
         guard let url = URL(string: base + path) else { return false }
@@ -123,6 +131,88 @@ enum CloudASR {
         return trimmed
     }
 
+    // MARK: Aliyun Bailian (Qwen-ASR, OpenAI-compatible chat with an audio part)
+
+    /// DashScope exposes Qwen-ASR through the *chat* endpoint, not /audio/transcriptions: the
+    /// audio travels as a base64 `input_audio` part and the transcript comes back as message
+    /// content.
+    private static func dashscope(wav: Data, settings: ASRSettings) async throws -> String {
+        let base = Net.normalizedBase(settings.baseURL)
+        guard let url = URL(string: base + "/chat/completions") else {
+            throw Failure(message: T(.errBadURL))
+        }
+        let audioURL = "data:audio/wav;base64," + wav.base64EncodedString()
+        var body: [String: Any] = [
+            "model": settings.model,
+            "messages": [[
+                "role": "user",
+                "content": [["type": "input_audio", "input_audio": ["data": audioURL]]],
+            ]],
+            "stream": false,
+        ]
+        if !settings.language.isEmpty { body["asr_options"] = ["language": settings.language] }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !settings.apiKey.isEmpty {
+            req.setValue("Bearer \(settings.apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, _) = try await send(req, host: url.host ?? "")
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = obj["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let text = message["content"] as? String else {
+            throw Failure(message: TF(.errASRFailed, snippet(data)))
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { throw Failure(message: T(.errEmptyTranscript)) }
+        return trimmed
+    }
+
+    // MARK: Baidu (short speech recognition, Bearer API key)
+
+    /// Baidu takes JSON with base64 audio, authenticates with a plain Bearer key (the older
+    /// access_token flow is also accepted, but the header is simpler), and answers
+    /// `{"err_no": 0, "result": ["..."]}`. The `model` field carries Baidu's dev_pid.
+    private static func baidu(wav: Data, settings: ASRSettings) async throws -> String {
+        let base = Net.normalizedBase(settings.baseURL)
+        guard let url = URL(string: base + "/server_api") else {
+            throw Failure(message: T(.errBadURL))
+        }
+        let body: [String: Any] = [
+            "format": "wav",
+            "rate": 16_000,
+            "channel": 1,
+            "cuid": "vox-dictation",
+            "dev_pid": Int(settings.model) ?? 1537,
+            "speech": wav.base64EncodedString(),
+            "len": wav.count,
+        ]
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !settings.apiKey.isEmpty {
+            req.setValue("Bearer \(settings.apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, _) = try await send(req, host: url.host ?? "")
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw Failure(message: TF(.errASRFailed, snippet(data)))
+        }
+        let errNo = (obj["err_no"] as? Int) ?? -1
+        guard errNo == 0, let pieces = obj["result"] as? [String] else {
+            let message = (obj["err_msg"] as? String) ?? snippet(data)
+            throw Failure(message: TF(.errASRFailed, message))
+        }
+        let text = pieces.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { throw Failure(message: T(.errEmptyTranscript)) }
+        return text
+    }
+
     // MARK: Plumbing
 
     private static func send(_ req: URLRequest, host: String) async throws -> (Data, HTTPURLResponse) {
@@ -138,6 +228,20 @@ enum CloudASR {
             throw error
         } catch {
             throw Failure(message: TF(.errASRFailed, error.localizedDescription))
+        }
+    }
+
+    /// Any HTTP status proves the host is reachable; a transport error means it is not.
+    private static func hostAnswers(_ base: String) async -> Bool {
+        guard let url = URL(string: base) else { return false }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 8
+        let session = Net.session(timeout: 8, host: url.host ?? "")
+        do {
+            _ = try await session.data(for: req)
+            return true
+        } catch {
+            return false
         }
     }
 

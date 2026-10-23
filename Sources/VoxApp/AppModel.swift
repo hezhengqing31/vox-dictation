@@ -250,6 +250,15 @@ final class AppModel: ObservableObject {
         if asrOnline != online { asrOnline = online }
     }
 
+    /// Test just the speech engine, for the Test button next to the ASR settings.
+    /// Cloud engines only prove the endpoint and key this way (a real upload costs money).
+    func testASR() async {
+        syncASR()
+        saveASRKey()
+        let ok = await asr.probe()
+        if asrOnline != ok { asrOnline = ok }
+    }
+
     /// Refresh the status dots every 20s (recovers after a network drop or service restart).
     func startHealthTicker() {
         healthTicker?.cancel()

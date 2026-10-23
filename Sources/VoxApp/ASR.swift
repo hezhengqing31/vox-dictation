@@ -331,22 +331,4 @@ final class ASR: ObservableObject {
         session = nil
         connected = false
     }
-
-    /// Local verification helper: does the left pane refresh while the transcript changes?
-    func _debugLive(_ text: String) {
-        liveText = text
-    }
-
-    /// Local verification helper: does the green text survive the tail window? Mimics stop()'s timing.
-    func _debugSimulateFinish(_ text: String, then seconds: Double = 1.2) {
-        finishing = true
-        liveText = text
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            guard let self else { return }
-            self.onFinal?(text)
-            self.liveText = ""
-            self.finishing = false
-        }
-    }
 }

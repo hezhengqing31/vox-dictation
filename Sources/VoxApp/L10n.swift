@@ -52,8 +52,11 @@ enum LKey {
 
     // Settings sheet
     case setLanguage, setProvider, setModel, setApiKey, setKeyHint
-    case setModelEndpoint, setEndpointHint, setClearNoAsk
+    case setModelEndpoint, setEndpointHint
     case setTest, setNotChecked, setConnected, setUnreachable
+    case setModelSection, setSpeechSection, setInterfaceSection
+    case tabModel, tabSpeech, tabApp, setConfirmClear, setConfirmClearHelp
+    case asrNotConfigured, asrKeyMissing, asrUnreachable, asrReady, setAsrLocalHelp, setAsrCloudHelp
     case setAsrEngine, asrSherpa, asrCustom, setAsrBaseURL, setAsrModel, setAsrKey, setAsrLanguage
     case setAsrHost, setAsrTitle, setAsrProtocol, setMicGranted, setMicDenied
 
@@ -149,11 +152,34 @@ private let table: [LKey: Pair] = [
     .setEndpointHint: Pair(
         zh: "OpenAI 兼容地址，例如 https://api.deepseek.com/v1；本机服务直接用 http://127.0.0.1:11434/v1",
         en: "An OpenAI-compatible base URL, e.g. https://api.deepseek.com/v1 — a local runtime is http://127.0.0.1:11434/v1"),
-    .setClearNoAsk: Pair(zh: "清空前不再询问", en: "Don't ask before clearing"),
     .setTest: Pair(zh: "测试连接", en: "Test"),
     .setNotChecked: Pair(zh: "未检测", en: "Not checked"),
     .setConnected: Pair(zh: "连接正常", en: "Connected"),
     .setUnreachable: Pair(zh: "连不上", en: "Unreachable"),
+    .setModelSection: Pair(zh: "大模型", en: "Model"),
+    .tabModel: Pair(zh: "大模型", en: "Model"),
+    .tabSpeech: Pair(zh: "语音识别", en: "Speech"),
+    .tabApp: Pair(zh: "应用设置", en: "App"),
+    .setConfirmClear: Pair(zh: "清空全部前先确认", en: "Ask before clearing everything"),
+    .setConfirmClearHelp: Pair(
+        zh: "清空会把输出、待发指令和历史记录一起抹掉，不能撤销。关掉这个开关，点「清空全部」就直接清，不再弹窗。",
+        en: "Clearing wipes the output, the pending instructions and the history at once, and cannot be undone. Turn this off and “Clear All” clears immediately without a dialog."),
+    .setSpeechSection: Pair(zh: "语音识别（ASR）", en: "Speech recognition (ASR)"),
+    .setInterfaceSection: Pair(zh: "界面", en: "Interface"),
+    .asrNotConfigured: Pair(
+        zh: "还没配好：语音识别要单独设置，否则松手后出不来文字",
+        en: "Not set up yet — speech recognition is configured separately; without it nothing appears after you stop."),
+    .asrKeyMissing: Pair(zh: "还缺 API Key", en: "API key is still missing"),
+    .asrUnreachable: Pair(
+        zh: "连不上：检查地址、Key 和模型名",
+        en: "Can't connect — check the endpoint, key and model name"),
+    .asrReady: Pair(zh: "已就绪：%@ · %@", en: "Ready: %@ · %@"),
+    .setAsrLocalHelp: Pair(
+        zh: "需要在这台主机上运行 sherpa-onnx 两个服务：流式 :6006（边说边出字）与非流式 :6007（出定稿）",
+        en: "Needs both sherpa-onnx servers running on that host: streaming :6006 (live text) and offline :6007 (final transcript)"),
+    .setAsrCloudHelp: Pair(
+        zh: "和上面的大模型是两套配置：地址、模型、Key 都单独填，松手后整段上传识别",
+        en: "Separate from the model above — its own endpoint, model and key. The take is uploaded once you stop."),
     .setAsrEngine: Pair(zh: "识别方式", en: "Speech engine"),
     .asrSherpa: Pair(zh: "本地 sherpa", en: "Local sherpa"),
     .asrCustom: Pair(zh: "自定义", en: "Custom"),

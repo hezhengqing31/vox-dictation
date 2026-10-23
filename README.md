@@ -70,12 +70,22 @@ do not need a server of your own.
 |---|---|
 | Local sherpa | A sherpa-onnx streaming server on `:6006` (live preview) and an offline server on `:6007` (final transcript), on the host you enter |
 | OpenAI / Groq / SiliconFlow / Custom | `POST {base}/audio/transcriptions`, multipart upload, Bearer key. Batch: the transcript arrives after you stop |
+| Aliyun Qwen-ASR | The OpenAI-compatible **chat** endpoint (`/compatible-mode/v1`): the audio travels as a base64 `input_audio` part, model `qwen3-asr-flash` |
+| Baidu Speech | `POST /server_api`, JSON with base64 audio, Bearer API key. The *model* field is Baidu's `dev_pid` (1537 Mandarin, 1737 English) |
 | Deepgram | `POST {base}/v1/listen?model=…` with the raw audio in the body |
 
-Not supported: vendors that queue a job or sign every request with their own scheme (AssemblyAI,
-Azure Speech, Alibaba Cloud, Tencent Cloud, Volcano Engine, iFlytek). Each needs a different auth
-flow plus a polling loop, so they are out of scope for now. Anything OpenAI-compatible works as
-*Custom*.
+Speech API shapes in the wild, and why only some are here:
+
+| Shape | Vendors | Status |
+|---|---|---|
+| OpenAI-compatible upload | OpenAI, Groq, SiliconFlow, Together, Fireworks | supported |
+| OpenAI-compatible chat with an audio part | Aliyun Bailian (Qwen-ASR) | supported |
+| Bearer key + base64 JSON | Baidu | supported |
+| Audio in the body, nested JSON response | Deepgram | supported |
+| Vendor-specific request signing | Tencent Cloud (TC3-HMAC, 60s / 3MB per call), iFlytek (HMAC over WebSocket) | not supported — needs each vendor's signature code |
+| Submit a job, then poll | Aliyun legacy ISI, Volcano Engine (appid + token), AssemblyAI, Azure Speech | not supported — needs upload + polling loops |
+
+Anything else that speaks the OpenAI transcription API works through *Custom*.
 
 ## How it works
 
