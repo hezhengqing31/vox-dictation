@@ -1,5 +1,7 @@
 # Vox Dictation
 
+English | [中文](README.zh-CN.md)
+
 A macOS dictation app that does not just transcribe — it edits. Press **Dictate**, speak,
 and the transcript lands as an *instruction*; **AI Append** folds it into the text you are
 writing, **AI Revise** rewrites what is already there. Text goes where your cursor is, so it
