@@ -342,61 +342,167 @@ struct ContentView: View {
     // MARK: Settings
 
     private var settingsSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(T(.settingsTitle)).font(.system(size: 14, weight: .semibold))
-            HStack(spacing: 8) {
-                Text(T(.setLanguage)).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
-                Picker("", selection: $m.uiLanguage) {
-                    ForEach(UILanguage.allCases) { language in
-                        Text(language.label).tag(language)
+        VStack(spacing: 0) {
+            // Scrollable so the sheet height stays fixed whether the ASR engine needs two
+            // fields (sherpa) or five (cloud).
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(T(.settingsTitle)).font(.system(size: 14, weight: .semibold))
+
+                    labelRow(T(.setProvider)) {
+                        Picker("", selection: $m.provider) {
+                            ForEach(LLMProvider.allCases) { provider in
+                                Text(provider.label).tag(provider)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 230)
                     }
+
+                    fieldBlock(T(.setModelEndpoint), text: $m.baseURLString,
+                               prompt: "https://api.deepseek.com/v1",
+                               help: T(.setEndpointHint))
+
+                    fieldBlock(T(.setModel), text: $m.modelName, prompt: m.provider.defaultModel)
+
+                    if m.provider.requiresKey {
+                        secureBlock(T(.setApiKey), text: $m.apiKey, prompt: "sk-…", help: T(.setKeyHint)) {
+                            m.saveAPIKey()
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            m.saveAPIKey()
+                            Task { await m.refreshHealth() }
+                        } label: { Text(T(.setTest)) }
+                            .buttonStyle(VoxButtonStyle(kind: .normal))
+                        Text(m.llmOK == nil ? T(.setNotChecked) : (m.llmOK! ? T(.setConnected) : T(.setUnreachable)))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(m.llmOK == nil ? Theme.sDim2 : (m.llmOK! ? Theme.sAccent : Theme.sFire))
+                    }
+
+                    Divider().overlay(Theme.sBorder)
+
+                    labelRow(T(.setAsrEngine)) {
+                        Picker("", selection: $m.asrEngine) {
+                            ForEach(ASREngine.allCases) { engine in
+                                Text(engine.label).tag(engine)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 230)
+                    }
+
+                    if m.asrEngine.usesLocalServers {
+                        fieldBlock(T(.setAsrHost), text: $m.asrHost, prompt: "127.0.0.1",
+                                   help: T(.setAsrTitle) + "\n" + m.asr.endpoint + T(.setAsrProtocol))
+                    } else {
+                        fieldBlock(T(.setAsrBaseURL), text: $m.asrBaseURL,
+                                   prompt: m.asrEngine.defaultBaseURL)
+                        fieldBlock(T(.setAsrModel), text: $m.asrModel, prompt: m.asrEngine.defaultModel)
+                        if m.asrEngine.requiresKey {
+                            secureBlock(T(.setAsrKey), text: $m.asrKey, prompt: "sk-…", help: nil) {
+                                m.saveASRKey()
+                            }
+                        }
+                        fieldBlock(T(.setAsrLanguage), text: $m.asrLanguage, prompt: "zh")
+                    }
+
+                    Text(m.asrAuthorized == true ? T(.setMicGranted) : T(.setMicDenied))
+                        .font(.system(size: 10))
+                        .foregroundStyle(m.asrAuthorized == true ? Theme.sDim2 : Theme.sFire)
+
+                    Divider().overlay(Theme.sBorder)
+
+                    labelRow(T(.setLanguage)) {
+                        Picker("", selection: $m.uiLanguage) {
+                            ForEach(UILanguage.allCases) { language in
+                                Text(language.label).tag(language)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 190)
+                    }
+
+                    Toggle(isOn: $m.clearNoAsk) {
+                        Text(T(.setClearNoAsk)).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
+                    }
+                    .toggleStyle(.checkbox)
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 190)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                Text(T(.setModelEndpoint)).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
-                TextField("http://127.0.0.1:5000", text: $m.baseURLString)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .padding(7)
-                    .background(Theme.sCard2)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.sBorder))
-                Text(T(.setEndpointHint))
-                    .font(.system(size: 10.5)).foregroundStyle(Theme.sDim2)
-            }
-            Toggle(isOn: $m.clearNoAsk) {
-                Text(T(.setClearNoAsk)).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
-            }
-            .toggleStyle(.checkbox)
-            HStack(spacing: 8) {
-                Button { Task { await m.refreshHealth() } } label: { Text(T(.setTest)) }
-                    .buttonStyle(VoxButtonStyle(kind: .normal))
-                Text(m.llmOK == nil ? T(.setNotChecked) : (m.llmOK! ? T(.setConnected) : T(.setUnreachable)))
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(m.llmOK == nil ? Theme.sDim2 : (m.llmOK! ? Theme.sAccent : Theme.sFire))
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(T(.setAsrTitle))
-                    .font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
-                Text(m.asr.endpoint + T(.setAsrProtocol))
-                    .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.sDim2)
-                Text(m.asrAuthorized == true ? T(.setMicGranted) : T(.setMicDenied))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(m.asrAuthorized == true ? Theme.sDim2 : Theme.sFire)
-            }
-            Spacer(minLength: 0)
+            Divider().overlay(Theme.sBorder)
             HStack {
                 Spacer()
-                Button { m.showSettings = false } label: { Text(T(.close)) }
+                Button {
+                    m.saveAPIKey()
+                    m.saveASRKey()
+                    m.showSettings = false
+                } label: { Text(T(.close)) }
                     .buttonStyle(VoxButtonStyle(kind: .primary))
             }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
         }
-        .padding(18)
-        .frame(width: 460, height: 340)
+        .frame(width: 500, height: 620)
         .background(Theme.sBg)
+    }
+
+    private func labelRow<C: View>(_ title: String, @ViewBuilder _ control: () -> C) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
+                .frame(width: 96, alignment: .leading)
+            control()
+            Spacer()
+        }
+    }
+
+    private func plainField(_ text: Binding<String>, prompt: String) -> some View {
+        TextField(prompt, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, design: .monospaced))
+            .padding(6)
+            .background(Theme.sCard2)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.sBorder))
+    }
+
+    private func fieldBlock(_ title: String, text: Binding<String>, prompt: String, help: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
+            plainField(text, prompt: prompt)
+            if let help {
+                Text(help)
+                    .font(.system(size: 10)).foregroundStyle(Theme.sDim2)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func secureBlock(_ title: String, text: Binding<String>, prompt: String,
+                             help: String?, onSubmit: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 11.5)).foregroundStyle(Theme.sDim)
+            SecureField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .padding(6)
+                .background(Theme.sCard2)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.sBorder))
+                .onSubmit(onSubmit)
+            if let help {
+                Text(help).font(.system(size: 10)).foregroundStyle(Theme.sDim2)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

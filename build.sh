@@ -30,7 +30,7 @@ for lproj in Resources/*.lproj; do
 done
 
 echo "==> ad-hoc signing (TCC needs a stable identity)"
-codesign --force --deep --sign - --identifier com.minds.vox "$APP" 2>&1 | tail -3
+codesign --force --deep --sign - --identifier app.voxdictation.mac "$APP" 2>&1 | tail -3
 
 echo "==> done: $(pwd)/$APP"
 if [ "${1:-}" = "run" ]; then

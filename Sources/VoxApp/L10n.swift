@@ -43,6 +43,7 @@ enum LKey {
 
     // Toasts
     case toastMicGranted, toastMicDenied, toastNoNewContent
+    case toastNoNewContentAdded
     case toastCopiedOutput, toastCopiedInstruction, toastAlreadyEmpty, toastCleared
     case toastModelUnavailable
 
@@ -50,14 +51,17 @@ enum LKey {
     case alertTitle, alertBody, alertClear, alertCancel, alertDontAsk
 
     // Settings sheet
-    case setLanguage, setModelEndpoint, setEndpointHint, setClearNoAsk
+    case setLanguage, setProvider, setModel, setApiKey, setKeyHint
+    case setModelEndpoint, setEndpointHint, setClearNoAsk
     case setTest, setNotChecked, setConnected, setUnreachable
-    case setAsrTitle, setAsrProtocol, setMicGranted, setMicDenied
+    case setAsrEngine, asrSherpa, asrCustom, setAsrBaseURL, setAsrModel, setAsrKey, setAsrLanguage
+    case setAsrHost, setAsrTitle, setAsrProtocol, setMicGranted, setMicDenied
 
     // Runtime errors (ASR / microphone / client)
     case errNoMicPermission, errDisconnected, errMicStart
     case errNoMicInput, errConverterInit
-    case errBadURL, errNoResponse, errEmptyModelOutput
+    case errBadURL, errNoResponse, errEmptyModelOutput, errProviderNotSet
+    case errASRFailed, errASREmptyAudio, errEmptyTranscript
 }
 
 /// One string in both languages.
@@ -117,6 +121,7 @@ private let table: [LKey: Pair] = [
     .toastNoNewContent: Pair(
         zh: "还没有新说的话，点「ASR 录入」先说一条",
         en: "Nothing new to send — press “Dictate” and say something first."),
+    .toastNoNewContentAdded: Pair(zh: "没有新增内容，原文未改动", en: "Nothing new to add — the text is unchanged"),
     .toastCopiedOutput: Pair(zh: "已复制输出", en: "Output copied"),
     .toastCopiedInstruction: Pair(zh: "已复制这条指令", en: "Instruction copied"),
     .toastAlreadyEmpty: Pair(zh: "已经是空的", en: "Already empty"),
@@ -134,16 +139,30 @@ private let table: [LKey: Pair] = [
 
     // Settings sheet
     .setLanguage: Pair(zh: "语言", en: "Language"),
-    .setModelEndpoint: Pair(zh: "大模型地址", en: "Model endpoint"),
+    .setProvider: Pair(zh: "厂商", en: "Provider"),
+    .setModel: Pair(zh: "模型", en: "Model"),
+    .setApiKey: Pair(zh: "API Key", en: "API Key"),
+    .setKeyHint: Pair(
+        zh: "Key 存在系统钥匙串里，不写进偏好设置",
+        en: "Stored in the macOS Keychain, never in preferences."),
+    .setModelEndpoint: Pair(zh: "接口地址", en: "Base URL"),
     .setEndpointHint: Pair(
-        zh: "走 /llmwriter/write 与 /llmwriter/rewrite；也可以填本机 mlx_lm.server 的等价地址",
-        en: "Calls /llmwriter/write and /llmwriter/rewrite; a local mlx_lm.server endpoint works too."),
+        zh: "OpenAI 兼容地址，例如 https://api.deepseek.com/v1；本机服务直接用 http://127.0.0.1:11434/v1",
+        en: "An OpenAI-compatible base URL, e.g. https://api.deepseek.com/v1 — a local runtime is http://127.0.0.1:11434/v1"),
     .setClearNoAsk: Pair(zh: "清空前不再询问", en: "Don't ask before clearing"),
     .setTest: Pair(zh: "测试连接", en: "Test"),
     .setNotChecked: Pair(zh: "未检测", en: "Not checked"),
     .setConnected: Pair(zh: "连接正常", en: "Connected"),
     .setUnreachable: Pair(zh: "连不上", en: "Unreachable"),
-    .setAsrTitle: Pair(zh: "ASR：服务器 sherpa 流式", en: "ASR: sherpa streaming on the server"),
+    .setAsrEngine: Pair(zh: "识别方式", en: "Speech engine"),
+    .asrSherpa: Pair(zh: "本地 sherpa", en: "Local sherpa"),
+    .asrCustom: Pair(zh: "自定义", en: "Custom"),
+    .setAsrBaseURL: Pair(zh: "识别接口", en: "Speech endpoint"),
+    .setAsrModel: Pair(zh: "识别模型", en: "Speech model"),
+    .setAsrKey: Pair(zh: "识别用 API Key", en: "Speech API key"),
+    .setAsrLanguage: Pair(zh: "识别语言（留空=自动）", en: "Language (blank = auto)"),
+    .setAsrHost: Pair(zh: "ASR 服务地址", en: "ASR host"),
+    .setAsrTitle: Pair(zh: "ASR：sherpa 流式 + 非流式定稿", en: "ASR: sherpa streaming + offline final pass"),
     .setAsrProtocol: Pair(
         zh: "（16k 单声道 Float32，与网页版同一协议）",
         en: " (16 kHz mono Float32, same protocol as the web version)"),
@@ -163,6 +182,12 @@ private let table: [LKey: Pair] = [
     .errBadURL: Pair(zh: "地址不合法", en: "Invalid endpoint URL"),
     .errNoResponse: Pair(zh: "无响应", en: "No response"),
     .errEmptyModelOutput: Pair(zh: "模型没有返回内容", en: "The model returned nothing"),
+    .errASRFailed: Pair(zh: "语音识别失败：%@", en: "Transcription failed: %@"),
+    .errASREmptyAudio: Pair(zh: "没有可上传的音频", en: "No audio to upload"),
+    .errEmptyTranscript: Pair(zh: "没有识别到文字", en: "Nothing was transcribed"),
+    .errProviderNotSet: Pair(
+        zh: "还没有配置大模型：到设置里选厂商、填 API Key",
+        en: "No model configured yet — pick a provider and paste an API key in Settings."),
 ]
 
 /// Holds the resolved language. Readable from any thread (microphone callbacks

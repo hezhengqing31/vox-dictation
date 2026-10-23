@@ -66,6 +66,41 @@ enum ASRSelfTest {
         exit(0)
     }
 
+    /// Verify the cloud path end to end (WAV container, multipart upload, JSON parse).
+    /// Takes a 16 kHz mono wav so no microphone is needed.
+    static func runCloudAndExit(wav: String, settings: ASRSettings) -> Never {
+        let sem = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                let file = try AVAudioFile(forReading: URL(fileURLWithPath: wav))
+                let fmt = file.processingFormat
+                guard fmt.sampleRate == 16_000, fmt.channelCount == 1 else {
+                    print("error: a 16k mono wav is required"); sem.signal(); exit(1)
+                }
+                guard let buf = AVAudioPCMBuffer(pcmFormat: fmt,
+                                                 frameCapacity: AVAudioFrameCount(file.length)) else {
+                    print("error: buffer"); sem.signal(); exit(1)
+                }
+                try file.read(into: buf)
+                guard let ch = buf.floatChannelData?[0] else { print("error: no data"); sem.signal(); exit(1) }
+                let n = Int(buf.frameLength)
+                let pcm = Data(bytes: ch, count: n * MemoryLayout<Float>.size)
+                print("engine: \(settings.engine.label)  base=\(settings.baseURL)  model=\(settings.model)  key=\(settings.apiKey.isEmpty ? "none" : "set")  lang=\(settings.language)")
+                let reachable = await CloudASR.reachable(settings: settings)
+                print("reachable: \(reachable ? "ok" : "fail")")
+                let t0 = Date()
+                let text = try await CloudASR.transcribe(pcm: pcm, settings: settings)
+                print(String(format: "cloudasr %.2fs → %@", Date().timeIntervalSince(t0), text))
+            } catch {
+                print("error: \(error.localizedDescription)")
+            }
+            sem.signal()
+            exit(0)
+        }
+        sem.wait()
+        exit(0)
+    }
+
     static func runAndExit(wav: String, host: String, port: Int, pad: Double = 1.2,
                            live: Bool = false) -> Never {
         let sem = DispatchSemaphore(value: 0)

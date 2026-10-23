@@ -1,15 +1,18 @@
 import Foundation
 import AVFoundation
 
-/// Streaming ASR client: 16 kHz mono Float32 audio goes over a WebSocket to the
-/// sherpa service on the server, which answers {text, is_final}. Same protocol as
-/// the web version.
+/// Streaming ASR client. Two kinds of engine share one capture path:
 ///
-/// It only reports what one take said: partials travel through `liveText`, the whole
-/// recording is handed to `onFinal` on release. The instruction list lives in AppModel
-/// (one entry per release).
-/// The audio callback runs on a realtime thread and must not read @MainActor state,
-/// hence a lock-protected switch.
+/// - **sherpa (local)**: 16 kHz mono Float32 goes over a WebSocket to the sherpa service, which
+///   answers {text, is_final} while you speak, and a second offline endpoint produces the final
+///   transcript. Same protocol as the web version.
+/// - **cloud vendors**: batch APIs only answer once the take is uploaded, so there is no live
+///   preview; audio is buffered and sent on release (`liveText` stays empty).
+///
+/// It only reports what one take said: partials travel through `liveText`, the whole recording is
+/// handed to `onFinal` on release. The instruction list lives in AppModel (one entry per release).
+/// The audio callback runs on a realtime thread and must not read @MainActor state, hence a
+/// lock-protected switch.
 final class CaptureGate: @unchecked Sendable {
     private let lock = NSLock()
     private var on = false
@@ -26,17 +29,19 @@ final class CaptureGate: @unchecked Sendable {
 final class ASR: ObservableObject {
 
     @Published private(set) var running = false
-    /// Still waiting for the server's last segment after release (the green text stays visible meanwhile).
+    /// Still waiting for the transcript after release (the green text stays visible meanwhile).
     @Published private(set) var finishing = false
     @Published private(set) var authorized = false
     @Published private(set) var connected = false
-    /// Live transcript while recording (the green line in the left pane).
+    /// Live transcript while recording (the green line in the left pane). Local engine only.
     @Published private(set) var liveText = ""
     /// Connection / device errors; the normal flow never shows them.
     @Published private(set) var errorText: String?
 
     /// Whole transcript of the take, delivered on stop.
     var onFinal: ((String) -> Void)?
+
+    private(set) var settings = ASRSettings()
 
     private let mic = MicCapture()
     private var ws: URLSessionWebSocketTask?
@@ -52,18 +57,20 @@ final class ASR: ObservableObject {
     /// Capture generation: the tail window after release may only close the capture it belongs to,
     /// so pressing start right after releasing is not killed by the previous deferred close.
     private var captureGen = 0
-    /// Whole take as 16 kHz Float32 PCM, handed to the offline model for the final transcript.
+    /// Whole take as 16 kHz Float32 PCM: the offline and cloud engines work on this.
     private var captureBuffer = Data()
     /// Cap at 60s so an abnormal state cannot grow without bound.
     private let captureLimit = 16_000 * 4 * 60
 
     // MARK: Configuration
 
-    /// ASR runs on the same server as the model, so the host comes from the model endpoint.
-    func configure(baseURL: String) {
-        if let u = URL(string: baseURL), let h = u.host { host = h }
+    func configure(_ settings: ASRSettings) {
+        self.settings = settings
+        let trimmed = settings.host.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty { host = trimmed }
     }
 
+    /// Local streaming endpoint, for the settings sheet.
     var endpoint: String { "ws://\(host):\(port)" }
 
     // MARK: Permission
@@ -78,6 +85,10 @@ final class ASR: ObservableObject {
     // MARK: Reachability (drives the status dot)
 
     func probe() async -> Bool {
+        guard settings.isConfigured else { return false }
+        guard settings.engine.usesLocalServers else {
+            return await CloudASR.reachable(settings: settings)
+        }
         guard let url = URL(string: endpoint) else { return false }
         let cfg = URLSessionConfiguration.ephemeral
         cfg.connectionProxyDictionary = [:]
@@ -94,6 +105,7 @@ final class ASR: ObservableObject {
     // MARK: Connection (pre-warmed: the handshake happens before the first press)
 
     func warmConnection() {
+        guard settings.engine.usesLocalServers else { return }
         guard ws == nil || ws?.state == .completed || ws?.state == .canceling else { return }
         guard let url = URL(string: endpoint) else { return }
         let cfg = URLSessionConfiguration.ephemeral
@@ -115,7 +127,7 @@ final class ASR: ObservableObject {
         mic.start(
             gate: gate,
             onPCM: { [weak self] data in
-                Task { @MainActor in self?.send(data) }
+                Task { @MainActor in self?.handlePCM(data) }
             },
             onError: { [weak self] message in
                 Task { @MainActor in self?.fail(message) }
@@ -145,7 +157,7 @@ final class ASR: ObservableObject {
         prepareEngine()             // normally ready; make sure anyway
         captureGen += 1
         captureBuffer.removeAll()
-        gate.set(true)              // from here on audio goes to the server
+        gate.set(true)              // from here on audio is captured
     }
 
     func stop() {
@@ -154,8 +166,9 @@ final class ASR: ObservableObject {
         finishing = true            // finishing: keep the green text on screen instead of blinking it away
         captureGen += 1
         let gen = captureGen
-
         let sock = ws
+        let cloud = !settings.engine.usesLocalServers
+
         Task { [weak self] in
             // Layer one: at the moment of release the tail of the last word is still in the
             // capture callback (one or two buffers in flight on the realtime thread, ~50-150ms).
@@ -164,22 +177,30 @@ final class ASR: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard let self else { return }
             if self.captureGen == gen { self.gate.set(false) }
-            // Close the device immediately: the final transcript only needs the PCM captured so far,
+            // Close the device immediately: the transcript only needs the PCM captured so far,
             // the recording dot should not wait for the result.
             self.releaseEngine()
 
             let pcm = self.captureBuffer
             self.captureBuffer.removeAll()
 
-            // Layer two: offline final transcript (SenseVoice on the server). It sees the whole
-            // take, so the tail is not guessed; typically 0.2-0.4s. Returns nil when unavailable
-            // or timed out, and we fall back to the streaming plus tail-silence path.
             var final: String? = nil
-            if !pcm.isEmpty {
+            if cloud {
+                // One upload per take. There is no streaming result to fall back on, so a
+                // failure has to surface in the pane.
+                do {
+                    final = try await CloudASR.transcribe(pcm: pcm, settings: self.settings)
+                } catch {
+                    self.errorText = error.localizedDescription
+                }
+            } else if !pcm.isEmpty {
+                // Layer two: offline final transcript (SenseVoice on the server). It sees the whole
+                // take, so the tail is not guessed; typically 0.2-0.4s. Returns nil when unavailable
+                // or timed out, and we fall back to the streaming plus tail-silence path.
                 final = await FileASR.transcribe(pcm: pcm, host: self.host)
             }
 
-            if final == nil {
+            if !cloud, final == nil {
                 // Fallback: the streaming paraformer decodes fixed chunks. Once audio stops, the
                 // last partial chunk never decodes — pad 1.2s of silence to fill it.
                 await self.flushTailSilence(seconds: 1.2)
@@ -188,7 +209,7 @@ final class ASR: ObservableObject {
 
             sock?.cancel(with: .normalClosure, reason: nil)
             self.stopSocket()
-            let text = final ?? self.finalizeText()   // liveText is not cleared here
+            let text = final ?? (cloud ? "" : self.finalizeText())   // liveText is not cleared here
             self.warmConnection()                      // handshake ahead of the next press
             self.onFinal?(text)                        // synchronous: the instruction enters the list first
             self.liveText = ""                         // then clear the green text, one view update, no gap
@@ -212,6 +233,14 @@ final class ASR: ObservableObject {
     private func fail(_ msg: String) {
         errorText = msg
         running = false
+    }
+
+    /// Audio from the microphone: always buffered for the transcript, forwarded to the socket
+    /// only by the local engine.
+    private func handlePCM(_ data: Data) {
+        if running, captureBuffer.count < captureLimit { captureBuffer.append(data) }
+        guard settings.engine.usesLocalServers else { return }
+        send(data)
     }
 
     private func listen(_ task: URLSessionWebSocketTask) {
@@ -259,7 +288,6 @@ final class ASR: ObservableObject {
             return
         }
         connected = true
-        if running, captureBuffer.count < captureLimit { captureBuffer.append(data) }
         if !pending.isEmpty {
             for d in pending { ws.send(.data(d)) { _ in } }
             pending.removeAll()

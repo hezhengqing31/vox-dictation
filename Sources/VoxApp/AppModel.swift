@@ -29,6 +29,8 @@ final class AppModel: ObservableObject {
     /// Output, instructions and history all empty (drives the "Clear All" disabled state).
     var isAllEmpty: Bool { output.isEmpty && instructions.isEmpty && applied.isEmpty }
 
+    // MARK: Model connection
+
     @Published var llmOK: Bool? = nil
     /// Model status line: running > not checked yet (connecting) > ready / offline.
     var llmStatusText: String {
@@ -42,6 +44,9 @@ final class AppModel: ObservableObject {
         if llmOK == nil { return Theme.sDim2 }
         return llmOK! ? Theme.sDim2 : Theme.sFire
     }
+
+    // MARK: ASR state
+
     @Published var asrAuthorized: Bool? = nil
     @Published var asrOnline: Bool? = nil
     /// ASR status line: recording wins over connection state.
@@ -71,15 +76,72 @@ final class AppModel: ObservableObject {
             L10n.shared.apply(uiLanguage)
         }
     }
-    @Published var toast: String? = nil
 
-    // Settings
-    @Published var baseURLString: String {
+    // MARK: Settings
+
+    /// Which vendor the app talks to. Switching fills in that vendor's base URL and model.
+    @Published var provider: LLMProvider {
         didSet {
-            UserDefaults.standard.set(baseURLString, forKey: "vox.baseURL")
-            asr.configure(baseURL: baseURLString)
+            guard provider != oldValue else { return }
+            UserDefaults.standard.set(provider.rawValue, forKey: "vox.provider")
+            baseURLString = provider.defaultBaseURL
+            modelName = provider.defaultModel
+            apiKey = Keychain.get(account: "llm." + provider.rawValue) ?? ""
+            llmOK = nil
+            Task { await self.refreshHealth() }
         }
     }
+    /// OpenAI-compatible base URL (a preset, or anything pasted in).
+    @Published var baseURLString: String {
+        didSet { UserDefaults.standard.set(baseURLString, forKey: "vox.baseURL") }
+    }
+    @Published var modelName: String {
+        didSet { UserDefaults.standard.set(modelName, forKey: "vox.model") }
+    }
+    /// Which engine transcribes: local sherpa servers, or a cloud vendor.
+    @Published var asrEngine: ASREngine {
+        didSet {
+            guard asrEngine != oldValue else { return }
+            UserDefaults.standard.set(asrEngine.rawValue, forKey: "vox.asrEngine")
+            asrBaseURL = asrEngine.defaultBaseURL
+            asrModel = asrEngine.defaultModel
+            asrKey = Keychain.get(account: "asr." + asrEngine.rawValue) ?? ""
+            asrOnline = nil
+            syncASR()
+            Task { await self.refreshHealth() }
+        }
+    }
+    /// Host (IP or name) of the sherpa speech servers; only used by the local engine.
+    @Published var asrHost: String {
+        didSet {
+            UserDefaults.standard.set(asrHost, forKey: "vox.asrHost")
+            syncASR()
+        }
+    }
+    @Published var asrBaseURL: String {
+        didSet {
+            UserDefaults.standard.set(asrBaseURL, forKey: "vox.asrBaseURL")
+            syncASR()
+        }
+    }
+    @Published var asrModel: String {
+        didSet {
+            UserDefaults.standard.set(asrModel, forKey: "vox.asrModel")
+            syncASR()
+        }
+    }
+    @Published var asrLanguage: String {
+        didSet {
+            UserDefaults.standard.set(asrLanguage, forKey: "vox.asrLanguage")
+            syncASR()
+        }
+    }
+    /// Key for the current speech engine. Memory only; written to the Keychain on save.
+    @Published var asrKey = ""
+    /// Key for the current provider. Held in memory only; written to the Keychain by `saveAPIKey()`.
+    @Published var apiKey = ""
+
+    @Published var toast: String? = nil
 
     let asr = ASR()
     let inputHandle = EditorHandle()
@@ -88,16 +150,28 @@ final class AppModel: ObservableObject {
     private var bag = Set<AnyCancellable>()
     private var toastTask: Task<Void, Never>? = nil
 
-
     init() {
-        // Talk to the backend on :5000 directly to dodge the 30s Next proxy timeout
-        // (the first request after a cold start can take 25s+).
-        baseURLString = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://127.0.0.1:5000"
-        clearNoAsk = UserDefaults.standard.bool(forKey: "vox.clearNoAsk")
+        let defaults = UserDefaults.standard
+        // Local copies first: reading a @Published property here would touch `self`
+        // before every stored property is initialised.
+        let storedProvider = LLMProvider(rawValue: defaults.string(forKey: "vox.provider") ?? "") ?? .deepseek
+        provider = storedProvider
+        baseURLString = defaults.string(forKey: "vox.baseURL") ?? storedProvider.defaultBaseURL
+        modelName = defaults.string(forKey: "vox.model") ?? storedProvider.defaultModel
+        asrHost = defaults.string(forKey: "vox.asrHost") ?? "127.0.0.1"
+        let storedASREngine = ASREngine(rawValue: defaults.string(forKey: "vox.asrEngine") ?? "") ?? .sherpa
+        asrEngine = storedASREngine
+        asrBaseURL = defaults.string(forKey: "vox.asrBaseURL") ?? storedASREngine.defaultBaseURL
+        asrModel = defaults.string(forKey: "vox.asrModel") ?? storedASREngine.defaultModel
+        asrLanguage = defaults.string(forKey: "vox.asrLanguage") ?? "zh"
+        asrKey = Keychain.get(account: "asr." + storedASREngine.rawValue) ?? ""
+        clearNoAsk = defaults.bool(forKey: "vox.clearNoAsk")
 
-        let storedLanguage = UserDefaults.standard.string(forKey: "vox.language")
+        let storedLanguage = defaults.string(forKey: "vox.language")
         uiLanguage = UILanguage(rawValue: storedLanguage ?? "") ?? .system
         L10n.shared.apply(uiLanguage)
+
+        apiKey = Keychain.get(account: "llm." + storedProvider.rawValue) ?? ""
 
         asr.onFinal = { [weak self] text in
             self?.handleVoiceFinal(text)      // synchronous: lands in the same frame that clears the live text
@@ -109,8 +183,44 @@ final class AppModel: ObservableObject {
             .store(in: &bag)
     }
 
-    var client: LLMClient {
-        LLMClient(baseURL: URL(string: baseURLString) ?? URL(string: "http://127.0.0.1:5000")!)
+    // MARK: Model plumbing
+
+    var modelConfig: ModelConfig {
+        ModelConfig(baseURL: baseURLString,
+                    model: modelName,
+                    apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Everything the transcription path needs, assembled from the settings.
+    var asrSettings: ASRSettings {
+        ASRSettings(engine: asrEngine,
+                    host: asrHost,
+                    baseURL: asrBaseURL,
+                    model: asrModel,
+                    apiKey: asrKey.trimmingCharacters(in: .whitespacesAndNewlines),
+                    language: asrLanguage.trimmingCharacters(in: .whitespaces))
+    }
+
+    func syncASR() {
+        asr.configure(asrSettings)
+    }
+
+    /// Persist the speech key for the current engine.
+    func saveASRKey() {
+        let key = asrKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        Keychain.set(key, account: "asr." + asrEngine.rawValue)
+    }
+
+    var chat: ChatClient { ChatClient(config: modelConfig) }
+    var writer: Writer { Writer(client: chat) }
+
+    /// Persist the key for the current provider. Safe to call often: empty values are ignored
+    /// by the Keychain helper, so an unset key never wipes a stored one.
+    func saveAPIKey() {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        Keychain.set(key, account: "llm." + provider.rawValue)
     }
 
     var hasOutput: Bool { !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -118,7 +228,7 @@ final class AppModel: ObservableObject {
     // MARK: Bootstrap
 
     func bootstrap() async {
-        asr.configure(baseURL: baseURLString)
+        syncASR()
         asr.warmConnection()               // shake hands early so the first press does not wait for the TCP setup
         // Light the status dots first: the permission dialog can block for a long time and must not drag them down.
         Task { await self.refreshHealth() }
@@ -130,8 +240,8 @@ final class AppModel: ObservableObject {
     }
 
     func refreshHealth() async {
-        asr.configure(baseURL: baseURLString)
-        let ok = await client.health()
+        syncASR()
+        let ok = await chat.reachable()
         // Only write on an actual change: assigning the same value to @Published still
         // invalidates the view, and doing that every 20s drags the focused editor into
         // an update loop.
@@ -172,9 +282,7 @@ final class AppModel: ObservableObject {
 
     func stopRecording() {
         guard asr.running else { return }
-        let started = Date()
         asr.stop()
-        _ = started
     }
 
     private func handleVoiceFinal(_ text: String) {
@@ -190,7 +298,7 @@ final class AppModel: ObservableObject {
         instructions.remove(at: index)
     }
 
-    // MARK: AI append
+    // MARK: AI append / revise
 
     /// Requests only fire on a button press: target = whatever the output pane holds,
     /// instructions = the takes collected by voice.
@@ -219,7 +327,7 @@ final class AppModel: ObservableObject {
             toastNow(T(.toastNoNewContent))
             return
         }
-        await runModify(content: output, instructions: pending, isTidy: true)
+        await run(mode: .append, instructions: pending, isTidy: true)
     }
 
     /// "AI Revise": apply the collected instructions to the existing text (rewrite / cut / reorder).
@@ -230,21 +338,25 @@ final class AppModel: ObservableObject {
             toastNow(T(.toastNoNewContent))
             return
         }
-        await runModify(content: output, instructions: pending, isTidy: false)
+        await run(mode: .revise, instructions: pending, isTidy: false)
     }
 
-    /// Call the writer endpoint: content + instructions -> result replaces the output pane;
-    /// the instructions move from pending to history.
-    private func runModify(content: String, instructions pending: [String], isTidy: Bool) async {
+    /// One request: the result replaces the output pane, the instructions move to history.
+    private func run(mode: Writer.Mode, instructions pending: [String], isTidy: Bool) async {
         guard !busy else { return }
+        saveAPIKey()
         busy = true
         pill = isTidy ? T(.stAppending) : T(.stRevising)
         do {
-            let (text, seconds) = try await client.modify(
-                content: content, instructions: pending, mode: isTidy ? "tidy" : "modify")
-            output = text
-            outputKind = .tidy
-            outputSeconds = seconds
+            let result = try await writer.run(mode: mode, content: output, instructions: pending)
+            if isTidy && result.added == 0 {
+                // The take carried no new fact, so the text stays exactly as it was.
+                toastNow(T(.toastNoNewContentAdded))
+            } else {
+                output = result.text
+                outputKind = .tidy
+                outputSeconds = result.seconds
+            }
             pill = T(.stReady)
             // The instructions ran: clear the pending list, keep them as history, never resend.
             applied.append(contentsOf: pending.map { AppliedItem(text: $0, isTidy: isTidy) })

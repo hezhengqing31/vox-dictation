@@ -29,6 +29,19 @@ struct VoxApp: App {
             let host = URL(string: base)?.host ?? "127.0.0.1"
             ASRSelfTest.runFileAndExit(wav: CommandLine.arguments[i + 1], host: host)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--cloudasrtest"),
+           i + 1 < CommandLine.arguments.count {
+            let d = UserDefaults.standard
+            let engine = ASREngine(rawValue: d.string(forKey: "vox.asrEngine") ?? "") ?? .sherpa
+            let settings = ASRSettings(
+                engine: engine,
+                host: d.string(forKey: "vox.asrHost") ?? "127.0.0.1",
+                baseURL: d.string(forKey: "vox.asrBaseURL") ?? engine.defaultBaseURL,
+                model: d.string(forKey: "vox.asrModel") ?? engine.defaultModel,
+                apiKey: Keychain.get(account: "asr." + engine.rawValue) ?? "",
+                language: d.string(forKey: "vox.asrLanguage") ?? "zh")
+            ASRSelfTest.runCloudAndExit(wav: CommandLine.arguments[i + 1], settings: settings)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--shot"),
            i + 1 < CommandLine.arguments.count {
             let delay = (i + 2 < CommandLine.arguments.count)
@@ -76,34 +89,56 @@ enum WindowShot {
     }
 }
 
-/// Headless self-test: verifies the "model endpoint + llmwriter" path end to end
+/// Headless self-test: exercises the configured provider end to end — reachability,
+/// first draft, append (existing text untouched) and revise. Needs a key in the Keychain
+/// or a local runtime; run it after `--selftest` reports a healthy endpoint.
 enum SelfTest {
     static func runAndExit() -> Never {
-        let base = UserDefaults.standard.string(forKey: "vox.baseURL") ?? "http://127.0.0.1:5000"
-        guard let url = URL(string: base) else { print("bad url"); exit(2) }
-        let client = LLMClient(baseURL: url)
+        let defaults = UserDefaults.standard
+        let provider = LLMProvider(rawValue: defaults.string(forKey: "vox.provider") ?? "") ?? .deepseek
+        let config = ModelConfig(
+            baseURL: defaults.string(forKey: "vox.baseURL") ?? provider.defaultBaseURL,
+            model: defaults.string(forKey: "vox.model") ?? provider.defaultModel,
+            apiKey: Keychain.get(account: "llm." + provider.rawValue))
+        let client = ChatClient(config: config)
+        let writer = Writer(client: client)
         let sem = DispatchSemaphore(value: 0)
         var code: Int32 = 1
 
         Task.detached {
-            let ok = await client.health()
-            print("health: \(ok ? "ok" : "fail")  base=\(base)")
+            print("provider: \(provider.label)  base=\(config.baseURL)  model=\(config.model)  key=\(config.apiKey == nil ? "none" : "set")")
+            let ok = await client.reachable()
+            print("health: \(ok ? "ok" : "fail")")
+            guard ok else { sem.signal(); exit(1) }
+
             do {
-                // Sample payloads stay in Chinese: they exercise the Chinese writing scenes on the server.
-                let (text, seconds) = try await client.write(
-                    instructions: ["把这段整理通顺"],
-                    target: "呃我们这个方案 那个 什么时候能定下来 然后 我这边 好安排",
-                    lastOutput: "")
-                print(String(format: "llmwriter %.2fs → %@", seconds, text))
-                // Rewrite endpoint: content + instructions
-                let (m1, s1) = try await client.modify(
+                // 1. first draft from a spoken take
+                let draft = try await writer.run(
+                    mode: .append, content: "",
+                    instructions: ["写一段上线通知 说清楚这周灰度 发现问题就回滚"])
+                print(String(format: "draft %.2fs (%d items added) → %@", draft.seconds, draft.added, draft.text))
+
+                // 2. append: a numbered list must keep its numbering and its original lines
+                let append = try await writer.run(
+                    mode: .append,
+                    content: "1. 周四完成回归测试\n2. 周五灰度百分之十",
+                    instructions: ["补一条 错误率超过百分之一就回滚"])
+                print(String(format: "append %.2fs (%d items added) → %@", append.seconds, append.added, append.text))
+
+                // 3. revise: change the text, add nothing
+                let revise = try await writer.run(
+                    mode: .revise,
                     content: "下周上线新的支付流程。灰度期间每天看错误率。",
-                    instructions: ["补一句 错误率超过百分之一就回滚"])
-                print(String(format: "modify %.2fs → %@", s1, m1))
-                let (m2, s2) = try await client.modify(
-                    content: "",
-                    instructions: ["列出三件上线前必须确认的事"])
-                print(String(format: "modify(empty content) %.2fs → %@", s2, m2))
+                    instructions: ["语气改正式一点"])
+                print(String(format: "revise %.2fs → %@", revise.seconds, revise.text))
+
+                // 4. a take that is a pure request: the classifier must route it to revise,
+                //    so nothing is invented and `added` stays 0
+                let routed = try await writer.run(
+                    mode: .append,
+                    content: "1. 周四完成回归测试\n2. 周五灰度百分之十",
+                    instructions: ["整理一下 通顺点"])
+                print(String(format: "append(request) %.2fs (%d items added) → %@", routed.seconds, routed.added, routed.text))
                 code = 0
             } catch {
                 print("error: \(error.localizedDescription)")
