@@ -77,8 +77,8 @@ struct Writer {
 
         let items = Writer.splitItems(Writer.tidyLines(Writer.stripMeta(raw)))
         let added = items.filter { !$0.isEmpty }
-        // "无新增" is the model's way of saying the take carried no new fact.
-        if added.isEmpty || added.contains(where: { $0.hasPrefix("无新增") }) {
+        // The prompt asks for this exact line when the take carried no new fact.
+        if added.isEmpty || added.contains(where: { $0.hasPrefix(Prompts.noNewContentMarker) || $0.hasPrefix("无新增") }) {
             return (Writer.tidyLines(target), 0)
         }
         return (Writer.tidyLines(Writer.attach(target: target, items: added)), added.count)
@@ -121,8 +121,11 @@ struct Writer {
     /// Drop self-commentary lines ("说明：…", "经核查…", a line that is only a parenthesised note)
     /// and the occasional "old text then new text" double output.
     static func stripMeta(_ text: String) -> String {
-        let prefixes = ["说明", "注", "备注", "经核查", "核对", "综上", "最终输出", "最终调整", "解释", "分析", "推理"]
-        let hints = ["根据指令", "故将", "故最终", "应为", "确认为正确写法"]
+        let prefixes = ["说明", "注", "备注", "经核查", "核对", "综上", "最终输出", "最终调整", "解释", "分析", "推理",
+                        "note", "explanation", "reasoning", "analysis", "final output", "checked",
+                        "verification", "justification"]
+        let hints = ["根据指令", "故将", "故最终", "应为", "确认为正确写法",
+                     "per the instruction", "as instructed", "should read", "final output"]
         var kept: [String] = []
 
         for line in text.components(separatedBy: "\n") {
@@ -132,8 +135,9 @@ struct Writer {
             if (trimmed.hasPrefix("（") && trimmed.hasSuffix("）"))
                 || (trimmed.hasPrefix("(") && trimmed.hasSuffix(")")) { continue }
             if trimmed.hasPrefix("根据指令") || trimmed.hasPrefix("经核查") || trimmed.hasPrefix("最终输出") { continue }
-            if trimmed.contains("说明："), trimmed.count > 60,
-               hints.filter({ trimmed.contains($0) }).count >= 2 { continue }
+            let lowered = trimmed.lowercased()
+            if trimmed.contains("说明：") || lowered.contains("note:"), trimmed.count > 60,
+               hints.filter({ lowered.contains($0.lowercased()) }).count >= 2 { continue }
             kept.append(line)
         }
         while let last = kept.last, last.trimmingCharacters(in: .whitespaces).isEmpty { kept.removeLast() }
@@ -207,13 +211,16 @@ struct Writer {
     /// numbered, otherwise start a new paragraph. The original string is never rewritten.
     static func attach(target: String, items: [String]) -> String {
         var items = items
-        // If every non-empty line of the target ends with a period, match that style.
+        // If every non-empty line of the target ends with a sentence mark, match that mark.
+        // The set covers both scripts so the same code works for English and Chinese text.
+        let enders = "。！？.!?"
         let lines = target.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        if !lines.isEmpty,
-           lines.allSatisfy({ $0.trimmingCharacters(in: .whitespaces).hasSuffix("。") }) {
+        let lineEnds = lines.compactMap { $0.trimmingCharacters(in: .whitespaces).last }
+        if !lineEnds.isEmpty, lineEnds.allSatisfy({ enders.contains($0) }) {
+            let mark = String(lineEnds.last ?? "。")
             items = items.map { item in
-                guard let last = item.last else { return item }
-                return "。！？".contains(last) ? item : item + "。"
+                guard let last = item.last, !enders.contains(last) else { return item }
+                return item + mark
             }
         }
 

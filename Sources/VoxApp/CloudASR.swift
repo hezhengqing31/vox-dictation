@@ -87,7 +87,7 @@ enum CloudASR {
         }
         req.httpBody = body
 
-        let (data, resp) = try await send(req, host: url.host ?? "")
+        let data = try await send(req, host: url.host ?? "")
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = obj["text"] as? String else {
             throw Failure(message: TF(.errASRFailed, snippet(data)))
@@ -117,7 +117,7 @@ enum CloudASR {
         }
         req.httpBody = wav
 
-        let (data, resp) = try await send(req, host: url.host ?? "")
+        let data = try await send(req, host: url.host ?? "")
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = obj["results"] as? [String: Any],
               let channels = results["channels"] as? [[String: Any]],
@@ -160,7 +160,7 @@ enum CloudASR {
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await send(req, host: url.host ?? "")
+        let data = try await send(req, host: url.host ?? "")
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = obj["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
@@ -199,7 +199,7 @@ enum CloudASR {
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await send(req, host: url.host ?? "")
+        let data = try await send(req, host: url.host ?? "")
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw Failure(message: TF(.errASRFailed, snippet(data)))
         }
@@ -215,7 +215,7 @@ enum CloudASR {
 
     // MARK: Plumbing
 
-    private static func send(_ req: URLRequest, host: String) async throws -> (Data, HTTPURLResponse) {
+    private static func send(_ req: URLRequest, host: String) async throws -> Data {
         let session = Net.session(timeout: 60, host: host)
         do {
             let (data, resp) = try await session.data(for: req)
@@ -223,7 +223,7 @@ enum CloudASR {
             guard http.statusCode == 200 else {
                 throw Failure(message: TF(.errASRFailed, "HTTP \(http.statusCode) \(snippet(data))"))
             }
-            return (data, http)
+            return data
         } catch let error as Failure {
             throw error
         } catch {

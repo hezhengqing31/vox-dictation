@@ -124,9 +124,15 @@ Three details worth knowing before changing the audio or model path:
   request ("tidy this up") is routed to the revise path by a 4-token classifier call first;
   without that split the model invents items to append.
 
-The prompts are tuned for Chinese dictation: they tell the model to repair homophones, drop
-self-corrections and keep the speaker's own voice. They are not translated yet — an English
-prompt set would need its own regression pass.
+The prompts are written in English (`WritingPrompts.swift`) and tell the model to answer in the
+language the speaker used, so Chinese dictation comes back in Chinese and English in English. The
+rules themselves were paid for in Chinese dictation sessions — homophone repair, spoken
+self-corrections, suppression of invented items — and hold in any language. A language is never
+mixed into the output: an English word inside a Chinese sentence (or the reverse) is a hard error.
+
+Two helpers around the prompt are language-aware: the response cleaner drops self-commentary
+lines in both scripts ("Note: …" / 「说明：…」), and appended items inherit the sentence-ending
+punctuation of the existing text ("。" or ".").
 
 ## Self-tests
 

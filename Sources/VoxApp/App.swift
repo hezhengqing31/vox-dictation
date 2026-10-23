@@ -115,29 +115,29 @@ enum SelfTest {
                 // 1. first draft from a spoken take
                 let draft = try await writer.run(
                     mode: .append, content: "",
-                    instructions: ["写一段上线通知 说清楚这周灰度 发现问题就回滚"])
+                    instructions: ["write a short rollout notice saying we canary this week and roll back if anything looks wrong"])
                 print(String(format: "draft %.2fs (%d items added) → %@", draft.seconds, draft.added, draft.text))
 
                 // 2. append: a numbered list must keep its numbering and its original lines
                 let append = try await writer.run(
                     mode: .append,
-                    content: "1. 周四完成回归测试\n2. 周五灰度百分之十",
-                    instructions: ["补一条 错误率超过百分之一就回滚"])
+                    content: "1. Regression testing finishes on Thursday\n2. Ten percent canary on Friday",
+                    instructions: ["add a line: roll back if the error rate passes one percent"])
                 print(String(format: "append %.2fs (%d items added) → %@", append.seconds, append.added, append.text))
 
                 // 3. revise: change the text, add nothing
                 let revise = try await writer.run(
                     mode: .revise,
-                    content: "下周上线新的支付流程。灰度期间每天看错误率。",
-                    instructions: ["语气改正式一点"])
+                    content: "We ship the new payment flow next week. During the canary we look at the error rate daily.",
+                    instructions: ["make the tone more formal"])
                 print(String(format: "revise %.2fs → %@", revise.seconds, revise.text))
 
                 // 4. a take that is a pure request: the classifier must route it to revise,
                 //    so nothing is invented and `added` stays 0
                 let routed = try await writer.run(
                     mode: .append,
-                    content: "1. 周四完成回归测试\n2. 周五灰度百分之十",
-                    instructions: ["整理一下 通顺点"])
+                    content: "1. Regression testing finishes on Thursday\n2. Ten percent canary on Friday",
+                    instructions: ["tidy this up and make it flow"])
                 print(String(format: "append(request) %.2fs (%d items added) → %@", routed.seconds, routed.added, routed.text))
                 code = 0
             } catch {
