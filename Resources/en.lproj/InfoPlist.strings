@@ -1,0 +1,8 @@
+/* English bundle strings — used by the system dialogs (TCC prompts, app name in the
+   Dock/Menu), which cannot follow the in-app language switch. */
+
+CFBundleDisplayName = "Vox Dictation";
+CFBundleName = "Vox";
+
+NSMicrophoneUsageDescription = "Vox records while you dictate. The audio goes to the speech server on your local network for transcription; nothing is uploaded to the internet.";
+NSSpeechRecognitionUsageDescription = "Turns what you say into text. Recognition runs on your local network and is never uploaded.";

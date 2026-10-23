@@ -1,0 +1,8 @@
+/* Chinese (Simplified) bundle strings — used by the system dialogs (TCC prompts,
+   app name in the Dock/Menu) which cannot follow the in-app language switch. */
+
+CFBundleDisplayName = "Vox 语音输入";
+CFBundleName = "Vox";
+
+NSMicrophoneUsageDescription = "点「ASR 录入」时需要录音，音频只发到局域网内的语音服务器做识别，不上传公网。";
+NSSpeechRecognitionUsageDescription = "把你说的话转成文字，识别在本地网络完成，不上传公网。";

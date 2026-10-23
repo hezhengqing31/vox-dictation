@@ -1,0 +1,11 @@
+# Build products
+.build/
+Vox.app/
+*.xcuserstate
+
+# macOS
+.DS_Store
+
+# Local scratch
+*.png
+.swiftpm/
